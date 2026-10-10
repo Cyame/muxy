@@ -67,6 +67,7 @@ pub(super) fn provider_id(provider: AgentProvider) -> &'static str {
         AgentProvider::Kiro => "kiro",
         AgentProvider::Xal => "xal",
         AgentProvider::Antigravity => "antigravity",
+        AgentProvider::OhMyPi => "omp",
         AgentProvider::Unrecognized(_) => "other",
     }
 }
