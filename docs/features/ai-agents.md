@@ -6,8 +6,8 @@ plugins, and works while no app is open.
 
 ## Supported agents
 
-Antigravity, Claude Code, Codex, Copilot, Cursor, Droid, Grok, Kiro, OpenCode,
-Pi, and Xal.
+Antigravity, Claude Code, Codex, Copilot, Cursor, Droid, Grok, Kiro, Oh My Pi,
+OpenCode, Pi, and Xal.
 
 The server spots them from the running program and what's on screen.
 Recognition is best effort.

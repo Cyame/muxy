@@ -133,6 +133,24 @@ fn bundled_manifests_compile_and_classify_provider_screens() {
             "",
             AgentState::Working,
         ),
+        (
+            AgentProvider::OhMyPi,
+            " say hello\n  ⎋ Working…",
+            "",
+            AgentState::Working,
+        ),
+        (
+            AgentProvider::OhMyPi,
+            "╭─── ✎ Write: 🗒 test.txt · 1 line ─────╮\n│   1 hello                         ╯\n[↑ ↓ to navigate, ⏎ to select, ⎋ to deny]",
+            "",
+            AgentState::Blocked,
+        ),
+        (
+            AgentProvider::OhMyPi,
+            " π · ◉ glm-5.2 · 🗑 /tmp ↳ muxy-pr · ⑂ fix/1x-icon-import",
+            "",
+            AgentState::Idle,
+        ),
     ];
     for (provider, screen, title, expected) in fixtures {
         assert_eq!(
@@ -191,7 +209,16 @@ fn process_identity_uses_executable_positions_not_prompt_text() {
         identify("bash", &["bash".into(), "-c".into(), "echo codex".into()]),
         None
     );
+    assert_eq!(
+        identify("omp", &["omp".into()]),
+        Some(AgentProvider::OhMyPi)
+    );
+    assert_eq!(
+        identify("node", &["node".into(), "/usr/local/bin/oh-my-pi".into()]),
+        Some(AgentProvider::OhMyPi)
+    );
     assert_eq!(identify("tmux", &["tmux".into(), "codex".into()]), None);
+    assert_eq!(identify("tmux", &["tmux".into(), "omp".into()]), None);
 }
 
 #[test]
@@ -266,6 +293,7 @@ fn fallback_providers_complete_only_after_stable_idle() {
         (AgentProvider::Copilot, "esc to cancel"),
         (AgentProvider::Droid, "esc to stop"),
         (AgentProvider::Pi, "Working..."),
+        (AgentProvider::OhMyPi, "  ⎋ Working…"),
         (AgentProvider::Antigravity, "⠋ Thinking"),
     ] {
         let mut detector = Detector::default();
