@@ -133,6 +133,24 @@ fn bundled_manifests_compile_and_classify_provider_screens() {
             "",
             AgentState::Working,
         ),
+        (
+            AgentProvider::OhMyPi,
+            " say hello\n  ⎋ Working…",
+            "",
+            AgentState::Working,
+        ),
+        (
+            AgentProvider::OhMyPi,
+            "╭─── ✎ Write: 🗒 test.txt · 1 line ─────╮\n│   1 hello                         ╯\n[↑ ↓ to navigate, ⏎ to select, ⎋ to deny]",
+            "",
+            AgentState::Blocked,
+        ),
+        (
+            AgentProvider::OhMyPi,
+            " π · ◉ glm-5.2 · 🗑 /tmp ↳ muxy-pr · ⑂ fix/1x-icon-import",
+            "",
+            AgentState::Idle,
+        ),
     ];
     for (provider, screen, title, expected) in fixtures {
         assert_eq!(
@@ -191,7 +209,16 @@ fn process_identity_uses_executable_positions_not_prompt_text() {
         identify("bash", &["bash".into(), "-c".into(), "echo codex".into()]),
         None
     );
+    assert_eq!(
+        identify("omp", &["omp".into()]),
+        Some(AgentProvider::OhMyPi)
+    );
+    assert_eq!(
+        identify("node", &["node".into(), "/usr/local/bin/oh-my-pi".into()]),
+        Some(AgentProvider::OhMyPi)
+    );
     assert_eq!(identify("tmux", &["tmux".into(), "codex".into()]), None);
+    assert_eq!(identify("tmux", &["tmux".into(), "omp".into()]), None);
 }
 
 #[test]
@@ -266,6 +293,7 @@ fn fallback_providers_complete_only_after_stable_idle() {
         (AgentProvider::Copilot, "esc to cancel"),
         (AgentProvider::Droid, "esc to stop"),
         (AgentProvider::Pi, "Working..."),
+        (AgentProvider::OhMyPi, "  ⎋ Working…"),
         (AgentProvider::Antigravity, "⠋ Thinking"),
     ] {
         let mut detector = Detector::default();
@@ -330,6 +358,123 @@ fn long_blank_redraw_preserves_cycle_and_blocked_state() {
                 now + Duration::from_millis(1300)
             ),
             expected == AgentState::Working
+        );
+    }
+}
+
+#[test]
+fn omp_headless_progress_completes_with_progress_still_in_history() {
+    let mut detector = Detector::default();
+    let now = Instant::now();
+    for (elapsed, screen, expected, completed) in [
+        (0, "Working...\n\n", AgentState::Working, false),
+        (1000, "", AgentState::Working, false),
+        (1100, "Working...\nAnswer", AgentState::Working, false),
+        (1800, "Working...\nAnswer", AgentState::Idle, true),
+        (2000, "Working...\nAnswer\n$ ", AgentState::Idle, false),
+    ] {
+        assert_eq!(
+            detector.update(
+                Some(AgentProvider::OhMyPi),
+                screen.into(),
+                "",
+                "",
+                now + Duration::from_millis(elapsed),
+            ),
+            completed,
+            "{screen:?}"
+        );
+        assert_eq!(detector.state, expected, "{screen:?}");
+    }
+}
+
+#[test]
+fn omp_trimmed_intent_preserves_work_until_approval_and_completion() {
+    let mut detector = Detector::default();
+    let now = Instant::now();
+    for (elapsed, screen, expected, completed) in [
+        (0, "  ⎋ Working…", AgentState::Working, false),
+        (100, "  ⎋ Inspecting files ", AgentState::Working, false),
+        (200, "  ⎋ Inspecting files", AgentState::Working, false),
+        (1000, "  ⎋ Inspecting files", AgentState::Working, false),
+        (
+            1100,
+            "  ⎋ Inspecting files\n[↑ ↓ to navigate, ⏎ to select, ⎋ to deny]",
+            AgentState::Blocked,
+            false,
+        ),
+        (1200, "  ⎋ Applying changes", AgentState::Working, false),
+        (1300, " π · model · project", AgentState::Working, false),
+        (1600, " π · model · project", AgentState::Idle, true),
+        (2000, " π · model · project", AgentState::Idle, false),
+    ] {
+        assert_eq!(
+            detector.update(
+                Some(AgentProvider::OhMyPi),
+                screen.into(),
+                "",
+                "",
+                now + Duration::from_millis(elapsed),
+            ),
+            completed,
+            "{screen:?}"
+        );
+        assert_eq!(detector.state, expected, "{screen:?}");
+    }
+}
+
+#[test]
+fn omp_legacy_spinner_survives_animation_and_completes_once() {
+    let mut detector = Detector::default();
+    let now = Instant::now();
+    for (elapsed, screen, expected, completed) in [
+        (0, "⠋ Working… [esc]\nπ › model", AgentState::Working, false),
+        (
+            1000,
+            "⠙ Working… [esc]\nπ › model",
+            AgentState::Working,
+            false,
+        ),
+        (1100, "Answer\nπ › model", AgentState::Working, false),
+        (1800, "Answer\nπ › model", AgentState::Idle, true),
+        (2000, "Answer\nπ › model", AgentState::Idle, false),
+    ] {
+        assert_eq!(
+            detector.update(
+                Some(AgentProvider::OhMyPi),
+                screen.into(),
+                "",
+                "",
+                now + Duration::from_millis(elapsed),
+            ),
+            completed,
+            "{screen:?}"
+        );
+        assert_eq!(detector.state, expected, "{screen:?}");
+    }
+}
+
+#[test]
+fn omp_working_mentions_do_not_start_a_cycle() {
+    let old_spinner = format!("⠋ Working… [esc]\n{}π › model", "answer\n".repeat(12));
+    for screen in [
+        "The tool printed Working...",
+        "> Working...",
+        "Working...\nAnswer\n$ ",
+        "  ⎋ ",
+        &old_spinner,
+    ] {
+        assert_eq!(
+            detect(
+                AgentProvider::OhMyPi,
+                DetectionInput {
+                    screen,
+                    osc_title: "",
+                    osc_progress: "",
+                },
+            ),
+            Some((AgentState::Idle, false)),
+            "{screen:?}"
         );
     }
 }

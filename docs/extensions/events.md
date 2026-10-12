@@ -46,7 +46,7 @@ Every payload value is a string.
   tabs open.
 - `agent.status` reports the busiest agent per worktree; `providerID` is
   `claude`, `codex`, `opencode`, `cursor`, `copilot`, `droid`, `pi`, `grok`,
-  `kiro`, `xal`, `antigravity`, or `other`.
+  `kiro`, `xal`, `antigravity`, `omp`, or `other`.
 
 ## Command events
 
