@@ -18,7 +18,7 @@ use super::{
     clipboard,
     colors::Palette,
     element, find, input,
-    scroll::{HistoryRequest, Scroll},
+    scroll::{HistoryRequest, Scroll, output_changed},
     selection::{Point, SelectedRow, Selection},
 };
 
@@ -89,6 +89,7 @@ pub(crate) struct TerminalPane {
     selection_pointer: Option<gpui::Point<gpui::Pixels>>,
     selection_scroll: Option<Task<()>>,
     pub(crate) input_modes: InputModes,
+    input_modes_reported: bool,
     pub(crate) composition: super::ime::Composition,
     pub(super) keyboard: input::Keyboard,
     server_input: bool,
@@ -183,6 +184,7 @@ impl TerminalPane {
             selection_pointer: None,
             selection_scroll: None,
             input_modes: InputModes::default(),
+            input_modes_reported: false,
             composition: super::ime::Composition::default(),
             keyboard: input::Keyboard::default(),
             server_input: false,
@@ -276,7 +278,13 @@ impl TerminalPane {
         let resized = self.viewport.filter(|size| *size != attachment.grid.size);
         self.reset_input();
         self.clear_selection();
-        self.scroll.reset();
+        let history = if resized.is_none() && self.keeps_scroll(&attachment.grid) {
+            self.scroll
+                .reattached(usize::from(attachment.grid.size.rows))
+        } else {
+            self.scroll.reset();
+            None
+        };
         self.saved_history = None;
         self.sent_cell_size = None;
         self.attachment = Some((server, attachment.channel));
@@ -294,8 +302,26 @@ impl TerminalPane {
         {
             grid.resize(size);
         }
+        if let Some(request) = history {
+            self.request_history(request, cx);
+        }
         cx.notify();
         resized
+    }
+
+    fn keeps_scroll(&self, live: &RunGrid) -> bool {
+        let scrolls_on_output = || {
+            self.terminal.options.scroll_on_output
+                && self
+                    .grid
+                    .as_ref()
+                    .is_none_or(|grid| output_changed(grid, live))
+        };
+        self.scroll
+            .view
+            .as_ref()
+            .is_some_and(|view| view.size == live.size)
+            && !scrolls_on_output()
     }
 
     pub(crate) fn apply(&mut self, frame: &ScreenFrame, cx: &mut Context<Self>) {
@@ -336,6 +362,7 @@ impl TerminalPane {
             if let Some(request) = self.scroll.move_rows(delta, grid, height) {
                 self.request_history(request, cx);
             }
+            self.scroll.revision = self.scroll.revision.wrapping_add(1);
             if was_scrolled && self.scroll.view.is_none() {
                 self.restart_find(cx);
             }
@@ -601,6 +628,7 @@ impl TerminalPane {
                 return;
             }
             MetadataEvent::InputModes(modes) => {
+                let first = !std::mem::replace(&mut self.input_modes_reported, true);
                 if self.state == PaneState::Live && self.input_modes != modes {
                     let was_reporting = self.reports_wheel();
                     if !modes.mouse_tracking {
@@ -611,7 +639,7 @@ impl TerminalPane {
                     }
                     self.wheel_remainder = 0.0;
                     self.input_modes = modes;
-                    if !was_reporting && self.reports_wheel() {
+                    if !first && !was_reporting && self.reports_wheel() {
                         self.clear_selection();
                         self.scroll.bottom();
                     }
@@ -731,6 +759,7 @@ impl TerminalPane {
         self.server_input = false;
         self.link_hover = super::links::Hover::default();
         self.input_modes = InputModes::default();
+        self.input_modes_reported = false;
         self.held_buttons.clear();
         self.last_mouse = None;
         self.wheel_remainder = 0.0;
@@ -868,13 +897,14 @@ impl TerminalPane {
     }
 
     fn mouse_wheel(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut Context<Self>) {
-        let delta = match event.delta {
-            gpui::ScrollDelta::Pixels(delta) => {
-                f32::from(delta.y) / self.cell_height.max(1.0)
-                    * self.terminal.options.scroll_precision
-            }
-            gpui::ScrollDelta::Lines(delta) => delta.y * self.terminal.options.scroll_discrete,
+        let (rows, multiplier) = match event.delta {
+            gpui::ScrollDelta::Pixels(delta) => (
+                f32::from(delta.y) / self.cell_height.max(1.0),
+                self.terminal.options.scroll_precision,
+            ),
+            gpui::ScrollDelta::Lines(delta) => (delta.y, self.terminal.options.scroll_discrete),
         };
+        let delta = rows * multiplier;
         if self.reports_wheel() && !event.modifiers.shift {
             if delta.signum() != self.wheel_remainder.signum() {
                 self.wheel_remainder = 0.0;
@@ -906,8 +936,7 @@ impl TerminalPane {
         self.prepare_saved_history(cx);
         #[cfg(target_os = "macos")]
         if !self.reports_wheel()
-            && self.terminal.options.scroll_precision.to_bits() == 1.0_f32.to_bits()
-            && self.terminal.options.scroll_discrete.to_bits() == 1.0_f32.to_bits()
+            && multiplier.to_bits() == 1.0_f32.to_bits()
             && let Some(position) = self
                 .native_scroll
                 .as_ref()
@@ -2321,6 +2350,102 @@ mod tests {
                 && event.button.is_none()
                 && event.column == 1
                 && event.row == 0));
+        }
+    }
+
+    #[gpui::test]
+    fn scaled_wheel_scrolling_stops_at_history_edges_and_moves_the_scroll_bar(
+        cx: &mut TestAppContext,
+    ) {
+        let pane = cx.new(|cx| {
+            let mut terminal = muxy_app_core::settings::TerminalSettings::default();
+            terminal.options.scroll_discrete = 4.0;
+            TerminalPane::new(Palette::new(true), terminal, cx)
+        });
+        pane.update(cx, |pane, cx| {
+            prepare_mouse(pane);
+            let mut wheel = gpui::ScrollWheelEvent {
+                position: point(px(15.0), px(5.0)),
+                delta: gpui::ScrollDelta::Lines(point(0.0, 1.0)),
+                ..gpui::ScrollWheelEvent::default()
+            };
+            let revision = pane.scroll.revision;
+            pane.mouse_wheel(&wheel, cx);
+            assert_eq!(pane.scroll.offset.to_bits(), 1.0_f64.to_bits());
+            assert_eq!(
+                pane.scroll.pixel_remainder(20.0).to_bits(),
+                0.0_f32.to_bits()
+            );
+            assert_ne!(pane.scroll.revision, revision);
+            assert_eq!(
+                pane.scroll.requested_pixels(20.0).to_bits(),
+                20.0_f64.to_bits()
+            );
+            wheel.delta = gpui::ScrollDelta::Lines(point(0.0, -1.0));
+            for _ in 0..2 {
+                pane.mouse_wheel(&wheel, cx);
+                assert!(pane.scroll.view.is_none());
+                assert_eq!(
+                    pane.scroll.pixel_remainder(20.0).to_bits(),
+                    0.0_f32.to_bits()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn attaching_again_keeps_a_scrolled_view_unless_the_terminal_moved_under_it(
+        cx: &mut TestAppContext,
+    ) {
+        let pane = cx.new(|cx| {
+            TerminalPane::new(
+                Palette::new(true),
+                muxy_app_core::settings::TerminalSettings::default(),
+                cx,
+            )
+        });
+        let quiet: fn(&mut RunGrid) = |_| {};
+        let printed: fn(&mut RunGrid) = |grid| grid.rows[0] = row(0, "new output").runs;
+        let repeated: fn(&mut RunGrid) = |grid| grid.history_total += 1;
+        for (resized, scroll_on_output, output, kept) in [
+            (false, false, printed, true),
+            (false, true, quiet, true),
+            (false, true, printed, false),
+            (false, true, repeated, false),
+            (true, false, quiet, false),
+        ] {
+            pane.update(cx, |pane, cx| {
+                prepare_mouse(pane);
+                pane.terminal.options.scroll_on_output = scroll_on_output;
+                pane.scroll_rows(1.0, cx);
+                let mut live = grid();
+                output(&mut live);
+                if resized {
+                    live.size.cols += 1;
+                    pane.viewport = Some(live.size);
+                }
+                pane.attach(
+                    ServerId::local(),
+                    Attachment {
+                        channel: ChannelId(2),
+                        server_input: false,
+                        grid: live,
+                        title: String::new(),
+                        directory: ServerPath(Vec::new()),
+                        process: None,
+                    },
+                    cx,
+                );
+                let reporting = InputModes {
+                    alternate_scroll: true,
+                    ..InputModes::default()
+                };
+                pane.metadata(MetadataEvent::InputModes(reporting), cx);
+                assert_eq!(pane.scroll.view.is_some(), kept);
+                pane.metadata(MetadataEvent::InputModes(InputModes::default()), cx);
+                pane.metadata(MetadataEvent::InputModes(reporting), cx);
+                assert!(pane.scroll.view.is_none());
+            });
         }
     }
 

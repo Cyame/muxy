@@ -33,7 +33,7 @@ pub(super) const SETTINGS: &[Setting] = &[
         id: "backup-legacy",
         label: tr_key!("Import from Muxy 1.x"),
         description: tr_key!(
-            "Import supported settings and local projects from the installed 1.x app, or choose a backup file. Unsupported options are skipped."
+            "Import supported settings and local projects from the installed 1.x app, only its projects and workspaces, or a backup file. Unsupported options are skipped."
         ),
         category: Category::Backup,
         section: tr_key!("Migration"),
@@ -697,6 +697,15 @@ pub(super) const SETTINGS: &[Setting] = &[
         ),
         category: Category::Terminal,
         section: tr_key!("Migration"),
+    },
+    Setting {
+        id: "terminal-reset",
+        label: tr_key!("Reset terminal settings"),
+        description: tr_key!(
+            "Return every setting on this page, including key bindings, to its default."
+        ),
+        category: Category::Terminal,
+        section: tr_key!("Reset"),
     },
     Setting {
         id: "server",

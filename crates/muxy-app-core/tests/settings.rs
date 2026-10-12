@@ -168,6 +168,25 @@ fn existing_bindings_take_precedence_over_new_project_defaults_and_round_trip() 
 }
 
 #[test]
+fn an_existing_binding_keeps_the_key_equalize_splits_defaults_to() -> Result {
+    let fixture = Fixture::new()?;
+    let chord: KeyChord = "cmd-ctrl-=".parse()?;
+    assert_eq!(
+        Keymap::default().action(&chord),
+        Some(ShortcutId::EqualizeSplits)
+    );
+    for existing in ["new_tab", "\"command.tests\""] {
+        let source = format!("[keymap]\n{existing} = 'cmd-ctrl-='\n");
+        let path = fixture.write("settings.toml", &source)?;
+        let keymap = Settings::load(&path)?.keymap;
+        assert_eq!(keymap.binding(existing.trim_matches('"')), Some(&chord));
+        assert_eq!(keymap.chord(ShortcutId::EqualizeSplits), None);
+        assert_eq!(fs::read_to_string(&path)?, source);
+    }
+    Ok(())
+}
+
+#[test]
 fn a_command_keeps_a_key_a_newer_default_claims_but_cannot_take_one_in_use() -> Result {
     let fixture = Fixture::new()?;
     let path = fixture.write(
@@ -408,6 +427,7 @@ fn servers_load_and_saves_keep_other_settings_and_hand_edits() -> Result {
             id: first,
             name: "box".into(),
             ssh: "dev@box".into(),
+            ssh_command: None,
             identity_file: None,
             password_login: false,
         }]
@@ -459,6 +479,70 @@ fn servers_load_and_saves_keep_other_settings_and_hand_edits() -> Result {
     assert!(settings.servers.is_empty());
     assert!(!fs::read_to_string(&path)?.contains("servers"));
     assert!(!Settings::load(&path)?.window.confirm_running_process);
+    Ok(())
+}
+
+#[test]
+fn custom_commands_round_trip_beside_legacy_ssh_and_reject_ambiguous_logins() -> Result {
+    let fixture = Fixture::new()?;
+    let path = fixture.write(
+        "settings.toml",
+        "[window]\nconfirm_running_process = false\n",
+    )?;
+    let mut settings = Settings::load(&path)?;
+    settings.add_server(ServerEntry::new("box".into(), "dev@box".into()), &path)?;
+    let custom = ServerEntry {
+        ssh_command: Some("'/Applications/VM Tool/vm' ssh 'dev box' --".into()),
+        ..ServerEntry::new("VM".into(), String::new())
+    };
+    settings.add_server(custom.clone(), &path)?;
+    let loaded = Settings::load(&path)?;
+    assert_eq!(loaded.servers, settings.servers);
+    assert!(!loaded.window.confirm_running_process);
+    let backup: Settings = toml::from_str(&muxy_app_core::backup::settings_source(&loaded)?)?;
+    assert_eq!(backup.servers, loaded.servers);
+    let source = fs::read_to_string(&path)?;
+    assert!(!source.contains("ssh = \"\""));
+    for invalid in [
+        ServerEntry {
+            ssh: "box".into(),
+            ..custom.clone()
+        },
+        ServerEntry {
+            identity_file: Some("key".into()),
+            ..custom.clone()
+        },
+        ServerEntry {
+            password_login: true,
+            ..custom.clone()
+        },
+        ServerEntry {
+            ssh_command: Some("vm 'unterminated".into()),
+            ..custom.clone()
+        },
+        ServerEntry {
+            ssh_command: Some(String::new()),
+            ..custom.clone()
+        },
+    ] {
+        assert!(settings.update_server(invalid, &path).is_err());
+        assert_eq!(fs::read_to_string(&path)?, source);
+        assert_eq!(settings.servers, loaded.servers);
+    }
+    settings.update_server(
+        ServerEntry {
+            ssh: "another@host".into(),
+            ssh_command: None,
+            ..custom
+        },
+        &path,
+    )?;
+    assert!(
+        Settings::load(&path)?
+            .servers
+            .iter()
+            .all(|server| server.ssh_command.is_none())
+    );
     Ok(())
 }
 

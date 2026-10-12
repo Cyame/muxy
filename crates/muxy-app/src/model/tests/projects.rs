@@ -2,6 +2,76 @@ use super::*;
 use muxy_protocol::ErrorCode;
 
 #[gpui::test]
+fn logo_picker_uses_the_target_project_directory_and_cancel_keeps_its_logo(
+    cx: &mut TestAppContext,
+) {
+    let (mut state, first, second, _, _) = two_projects();
+    let logo = include_bytes!("../../../../muxy-protocol/tests/fixtures/project-logo.png");
+    state
+        .set_project_logo(first, Some(logo.as_slice().into()))
+        .expect("logo");
+    let projects = state.projects().to_vec();
+    let directory = state
+        .project(first)
+        .expect("target project")
+        .directory
+        .clone();
+    let (boot, _requests) = stub_boot(state);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    view.update(cx, |model, cx| {
+        assert_eq!(model.state.current_project().id, second);
+        model.choose_project_logo_with(
+            first,
+            |start, _| {
+                assert_eq!(start, Some(directory.as_path()));
+                std::future::ready(Ok(None))
+            },
+            cx,
+        );
+        assert!(model.project_logo_task.is_some());
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |model, _| {
+        assert_eq!(model.state.projects(), projects);
+        assert_eq!(model.state.current_project().id, second);
+        assert!(model.overlay.is_none());
+        assert!(model.error.is_none());
+    });
+}
+
+#[gpui::test]
+fn logo_picker_does_not_use_a_remote_project_path_even_if_it_exists_locally(
+    cx: &mut TestAppContext,
+) {
+    let mut state = AppState::bootstrap().expect("state");
+    let server = ServerId::new();
+    state
+        .apply_catalog(server, &servers::page(2, ProjectId::new(), &[]))
+        .expect("remote catalog");
+    let project = state
+        .add_project(server, std::env::current_dir().expect("cwd"))
+        .expect("remote project");
+    let (boot, _requests, _remotes) = remote_boot(state, vec![servers::entry(server, "box")]);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    view.update(cx, |model, cx| {
+        model.choose_project_logo_with(
+            project,
+            |directory, _| {
+                assert!(directory.is_none());
+                std::future::ready(Ok(None))
+            },
+            cx,
+        );
+        assert!(model.project_logo_task.is_some());
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |model, _| {
+        assert!(model.overlay.is_none());
+        assert!(model.error.is_none());
+    });
+}
+
+#[gpui::test]
 fn rejected_project_intent_advances_fifo_but_storage_failure_preserves_it(cx: &mut TestAppContext) {
     let (state, _, _, _, _) = two_projects();
     let (boot, requests) = stub_boot(state);
@@ -45,6 +115,74 @@ fn rejected_project_intent_advances_fifo_but_storage_failure_preserves_it(cx: &m
             )
         );
         assert!(model.error.is_some());
+    });
+}
+
+#[gpui::test]
+fn one_x_projects_join_the_running_app_and_keep_what_is_there(cx: &mut TestAppContext) {
+    let legacy = tempfile::tempdir().expect("1.x folder");
+    let first = tempfile::tempdir().expect("first folder");
+    let second = tempfile::tempdir().expect("second folder");
+    let ids = [
+        "01000000-0000-0000-0000-000000000001",
+        "01000000-0000-0000-0000-000000000002",
+    ];
+    std::fs::write(
+        legacy.path().join("projects.json"),
+        serde_json::json!([
+            {"id":ids[0],"name":"First","path":first.path(),"sortOrder":0,"pullRequestPrompt":"From 1.x"},
+            {"id":ids[1],"name":"Second","path":second.path(),"sortOrder":1}
+        ])
+        .to_string(),
+    )
+    .expect("projects");
+    std::fs::write(
+        legacy.path().join("project-groups.json"),
+        serde_json::json!([{"id":"02000000-0000-0000-0000-000000000001","name":"Work","sortOrder":0,"projectIDs":ids,"type":"local"}])
+            .to_string(),
+    )
+    .expect("workspaces");
+    let mut state = AppState::bootstrap().expect("state");
+    let hand_added = state
+        .add_project(ServerId::local(), first.path().into())
+        .expect("project");
+    state
+        .rename_project(hand_added, "Hand added")
+        .expect("rename");
+    state.open_terminal_tab(hand_added).expect("tab");
+    let tabs = state.project(hand_added).expect("project").tabs.clone();
+    let (boot, requests) = stub_boot(state);
+    let (view, cx) = cx.add_window_view(|window, cx| AppModel::new(boot, window, cx));
+    view.update(cx, |model, cx| {
+        model.receive((ServerId::local(), 1, Update::Connected(vec![])), cx);
+        acknowledge_catalog(model, cx);
+        requests.try_iter().for_each(drop);
+        let import = crate::backup::projects_from(legacy.path()).expect("1.x projects");
+        assert_eq!(model.import_legacy_projects(&import, cx), Ok((1, 1)));
+
+        let second: ProjectId = ids[1].parse().expect("ID");
+        let kept = model.state.project(hand_added).expect("hand-added project");
+        assert_eq!((kept.name.as_str(), &kept.tabs), ("Hand added", &tabs));
+        assert!(model.state.project(ids[0].parse().expect("ID")).is_none());
+        assert_eq!(
+            model.state.workspaces()[0].projects,
+            [hand_added, second].into()
+        );
+        assert_eq!(
+            model.settings.ai.project_pr_prompts[&hand_added.to_string()],
+            "From 1.x"
+        );
+        assert!(
+            store::load(&model.path)
+                .expect("saved state")
+                .project(second)
+                .is_some()
+        );
+        assert!(requests.try_iter().any(|(_, work)| matches!(
+            work,
+            Work::MutateProject(intent)
+                if matches!(&intent.mutation, muxy_protocol::ProjectMutation::Create(project) if project.id == second)
+        )));
     });
 }
 

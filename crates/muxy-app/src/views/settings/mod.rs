@@ -120,6 +120,7 @@ pub(crate) enum Change {
     CloseBehavior(muxy_app_core::settings::CloseBehavior),
     Terminal(&'static str, String),
     TerminalEdit(muxy_app_core::settings::TerminalEdit),
+    ResetTerminal,
     /// `[openers] file`: a built-in opener, or `<extension>:<opener>`.
     FileOpener(String),
     Directory(muxy_app_core::settings::NewPaneDirectory),
@@ -137,6 +138,7 @@ pub(crate) enum SettingsEvent {
     Backup(backup::Action),
     Change(Change),
     PreviewTerminal(&'static str, String),
+    ResetTerminal,
     Picker(PickerKind, PickerAnchor),
     ServerControl { restart: bool },
     ReadServer,
@@ -146,6 +148,7 @@ pub(crate) enum SettingsEvent {
     RevokeDevice(muxy_protocol::DeviceId),
     Connect,
     OpenConfiguration(&'static str),
+    DismissProblem,
 }
 
 #[derive(Clone)]
@@ -508,11 +511,24 @@ impl SettingsView {
                 "commands" => self.command_editor = None,
                 "font-codepoint-map" => self.codepoint_editor = None,
                 "terminal-keybindings" => self.binding_editor = None,
+                "terminal-reset" => {
+                    self.codepoint_editor = None;
+                    self.binding_editor = None;
+                    self.errors.retain(|id, _| !terminal::owns(id));
+                }
                 _ => (),
             }
         }
         self.results.dirty = true;
         cx.notify();
+    }
+
+    /// Clears a page-level error; the application error is dismissed everywhere.
+    fn dismiss_error(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.set_error(id, None, cx);
+        if id == "application" {
+            cx.emit(SettingsEvent::DismissProblem);
+        }
     }
 
     fn commit_field(&mut self, id: &'static str, cx: &mut Context<Self>) {

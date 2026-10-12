@@ -78,13 +78,21 @@ impl Scroll {
         self.set_offset(height);
     }
 
+    pub(crate) fn reattached(&mut self, height: usize) -> Option<HistoryRequest> {
+        self.resized(height);
+        self.restarted = false;
+        self.request(height)
+    }
+
     pub(crate) fn move_rows(
         &mut self,
         delta: f32,
         live: &RunGrid,
         height: usize,
     ) -> Option<HistoryRequest> {
-        self.move_to(self.wanted + f64::from(delta), live, height)
+        let request = self.move_to(self.wanted + f64::from(delta), live, height);
+        self.elastic = 0.0;
+        request
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -407,6 +415,12 @@ impl Scroll {
     }
 }
 
+pub(crate) fn output_changed(before: &RunGrid, after: &RunGrid) -> bool {
+    before.rows != after.rows
+        || before.cursor != after.cursor
+        || before.history_total != after.history_total
+}
+
 fn continues_snapshot(view: &RunGrid, page: &HistoryPage) -> bool {
     view.history_total == page.total_rows
         && page.screen.as_ref().is_some_and(|screen| {
@@ -594,6 +608,22 @@ mod tests {
         let view = scroll.view.clone();
         scroll.receive(request, Ok(page(60, 80, Some(HistoryCursor(7)))), 5);
         assert_eq!(scroll.view, view);
+    }
+
+    #[test]
+    fn a_reattached_view_keeps_its_rows_and_asks_again_for_the_page_it_missed() {
+        let live = grid();
+        let mut scroll = Scroll::default();
+        let missed = scroll.move_rows(20.0, &live, 5).unwrap();
+        let before = visible(&scroll, &live, 5);
+        let request = scroll.reattached(5).unwrap();
+        assert_eq!(request.before, missed.before);
+        assert_ne!(request.token, missed.token);
+        scroll.receive(missed, Ok(page(40, 60, None)), 5);
+        assert_eq!(scroll.pending, Some(request));
+        scroll.receive(request, Ok(page(60, 80, None)), 5);
+        assert_eq!(visible(&scroll, &live, 5), before);
+        assert_eq!(scroll.start(scroll.view.as_ref().unwrap(), 5), 20);
     }
 
     #[test]

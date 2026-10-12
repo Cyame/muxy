@@ -19,8 +19,9 @@ quit the app, and every app shows the same screen and history.
 
 - New panes open in the project folder. Set **Settings → Terminal → New pane
   directory** to open them in the current pane's folder instead.
-- Drag dividers to resize. `Cmd`-drag a pane onto another pane to swap them, or
-  onto an edge to dock it there.
+- Drag dividers to resize, or even them out with **Equalize Splits**
+  (`Cmd+Ctrl+=`, or a pane's right-click menu). `Cmd`-drag a pane onto another
+  pane to swap them, or onto an edge to dock it there.
 - Right-click a tab to rename, color, or pin it. Pinned tabs stay first and
   can't be closed until unpinned.
 
@@ -37,8 +38,8 @@ list.
 - **Existing Terminals** (`Cmd+Opt+T`, or the project menu) lists the project's
   terminals that this app isn't showing, with the app that owns each, and opens
   one in a new tab.
-- Set **Settings → General → When closing tabs or panes** to detach to make
-  every close a detach.
+- Set **Settings → General → When closing tabs or panes** to **Detach** to make
+  every tab and pane close a detach.
 - Quitting the app or closing its window never ends a terminal. **End All
   Sessions and Quit** in the app menu ends every terminal on this computer,
   without asking first.
@@ -83,7 +84,8 @@ A terminal that drops down from the top of the screen from anywhere. Record a
 global shortcut in **Settings → Quick Terminal** first; none is set by default.
 
 It keeps one terminal in Home, hides when it loses focus, and has its own size
-and transparency settings. `Cmd+W` ends its terminal.
+and transparency settings. `Cmd+W` closes it and ends its terminal, whatever
+the close setting, unless another pane still shows it.
 
 ## Appearance and configuration
 

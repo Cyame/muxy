@@ -48,6 +48,7 @@ use crate::boot::{Boot, Update, Work, missing_session};
 use crate::views::overlays::Overlay;
 use crate::views::terminal::colors::Palette;
 use crate::views::terminal::pane::{PaneEvent, PaneState, TerminalPane};
+use crate::views::terminal::scroll::{Scroll, output_changed};
 use muxy_ui::theme::{Metrics, Theme};
 use muxy_ui::tr;
 
@@ -187,6 +188,7 @@ pub(crate) struct AppModel {
     retained: HashSet<PaneId>,
     loaded: HashSet<PaneId>,
     snapshots: HashMap<PaneId, RunGrid>,
+    scrolls: HashMap<PaneId, Scroll>,
     pub(crate) window_active: bool,
     #[cfg(target_os = "macos")]
     notifications: Option<muxy_ui::notifications::Notifications>,
@@ -540,6 +542,7 @@ impl AppModel {
             retained: HashSet::new(),
             loaded: HashSet::new(),
             snapshots: HashMap::new(),
+            scrolls: HashMap::new(),
             window_active: window.is_window_active(),
             #[cfg(target_os = "macos")]
             notifications: Self::start_notifications(cx),
@@ -704,6 +707,12 @@ impl AppModel {
         }
     }
 
+    pub(crate) fn equalize_splits(&mut self, pane: PaneId, cx: &mut Context<Self>) {
+        if self.quitting == Quitting::Idle && self.state.equalize_splits(pane).is_ok() {
+            self.changed(cx);
+        }
+    }
+
     fn tab_project(&self, tab: TabId) -> Option<&muxy_app_core::Project> {
         self.state
             .projects()
@@ -819,6 +828,72 @@ impl AppModel {
         self.focus_requested = true;
         cx.notify();
         true
+    }
+
+    /// Adds the projects, tabs, and workspaces Muxy 1.x had to the running
+    /// app, and returns how many projects and workspaces that added. What is
+    /// already here stays as it is.
+    pub(crate) fn import_legacy_projects(
+        &mut self,
+        import: &crate::backup::LegacyProjects,
+        cx: &mut Context<Self>,
+    ) -> Result<(usize, usize), String> {
+        let merged = import
+            .state
+            .merge_configuration(&self.state)
+            .map_err(|error| error.to_string())?;
+        let added = (
+            merged.projects().len() - self.state.projects().len(),
+            merged.workspaces().len() - self.state.workspaces().len(),
+        );
+        self.keep_legacy_preferences(muxy_app_core::backup::remap_project_settings(
+            import.settings.clone(),
+            &import.state,
+            &merged,
+        ))?;
+        let previous = std::mem::replace(&mut self.state, merged);
+        if let Err(error) = store::save(&self.path, &self.state) {
+            self.state = previous;
+            return Err(error.to_string());
+        }
+        self.replay_projects(cx);
+        self.sync_visible(cx);
+        cx.notify();
+        Ok(added)
+    }
+
+    /// A preference this profile already keeps for a project wins.
+    fn keep_legacy_preferences(
+        &mut self,
+        legacy: muxy_app_core::settings::Settings,
+    ) -> Result<(), String> {
+        let path = self.path.with_file_name("settings.toml");
+        let mut settings = self.settings.clone();
+        for (project, location) in legacy.worktrees.projects {
+            settings
+                .worktrees
+                .projects
+                .entry(project)
+                .or_insert(location);
+        }
+        if settings.worktrees != self.settings.worktrees {
+            settings
+                .save_worktrees(&path)
+                .map_err(|error| error.to_string())?;
+            self.settings.worktrees = settings.worktrees;
+        }
+        for (project, prompt) in legacy.ai.project_pr_prompts {
+            if !self.settings.ai.project_pr_prompts.contains_key(&project) {
+                self.settings.ai = muxy_app_core::settings::Settings::save_ai_entry(
+                    &path,
+                    "project_pr_prompts",
+                    &project,
+                    Some(&prompt),
+                )
+                .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn move_project(&mut self, from: ProjectId, to: ProjectId, cx: &mut Context<Self>) {
@@ -1484,8 +1559,14 @@ impl AppModel {
                 {
                     self.send(server, Work::Detach(channel), cx);
                 }
-                if let Some(grid) = pane.view.update(cx, |pane, _| pane.grid.take()) {
+                let (grid, scroll) = pane.view.update(cx, |pane, _| {
+                    (pane.grid.take(), std::mem::take(&mut pane.scroll))
+                });
+                if let Some(grid) = grid {
                     self.snapshots.insert(id, grid);
+                    if scroll.view.is_some() {
+                        self.scrolls.insert(id, scroll);
+                    }
                 }
                 self.loaded.remove(&id);
             }
@@ -1510,6 +1591,7 @@ impl AppModel {
         self.font_sizes.retain(|id, _| panes.contains(id));
         self.initial_directories.retain(|id, _| panes.contains(id));
         self.snapshots.retain(|id, _| panes.contains(id));
+        self.scrolls.retain(|id, _| panes.contains(id));
         self.retained.retain(|id| panes.contains(id));
         self.loaded.retain(|id| panes.contains(id));
         for id in visible {
@@ -1531,6 +1613,7 @@ impl AppModel {
         }
         let open_context = self.opener_context(id);
         let snapshot = self.snapshots.remove(&id);
+        let scroll = self.scrolls.remove(&id).unwrap_or_default();
         let state = self.pane_state(id);
         let view = cx.new(|cx| {
             let mut pane = TerminalPane::new(self.palette, terminal, cx);
@@ -1541,6 +1624,9 @@ impl AppModel {
             pane.open_context = open_context;
             pane.grid = snapshot;
             pane.set_state(state, cx);
+            if state == PaneState::Live {
+                pane.scroll = scroll;
+            }
             pane
         });
         let subscription = cx.subscribe(&view, move |model, _, event, cx| match event {
@@ -2171,6 +2257,14 @@ impl AppModel {
             }
         } else {
             self.send(server, Work::Detach(attachment.channel), cx);
+            if self.terminal.options.scroll_on_output
+                && self
+                    .snapshots
+                    .get(&pane)
+                    .is_some_and(|grid| output_changed(grid, &attachment.grid))
+            {
+                self.scrolls.remove(&pane);
+            }
             self.snapshots.insert(pane, attachment.grid);
         }
     }
@@ -2581,6 +2675,7 @@ mod tests {
     mod remote_parity;
     mod servers;
     mod session_ownership;
+    mod shortcut_hints;
     mod splits;
     mod tab_groups;
     mod tab_menu;

@@ -3,6 +3,7 @@
 mod mobile;
 
 use super::*;
+use crate::model::banners::BannerKind;
 use crate::views::settings::Change;
 
 fn settings_view(model: &AppModel) -> Entity<crate::views::settings::SettingsView> {
@@ -253,6 +254,65 @@ fn terminal_preview_preserves_concurrent_edits_and_rolls_back_failed_saves(
 }
 
 #[gpui::test]
+fn terminal_reset_asks_first_then_restores_every_default_on_the_page(cx: &mut TestAppContext) {
+    use muxy_app_core::settings::{NewPaneDirectory, TerminalSettings};
+    let mut state = AppState::bootstrap().expect("state");
+    state.open_terminal_tab(state.home().id).expect("tab");
+    let (boot, _) = stub_boot(state);
+    let path = boot.state_path.with_file_name("terminal.toml");
+    let app_settings = boot.state_path.with_file_name("settings.toml");
+    let (model, settings) = settings_window(boot, cx);
+    model.update(settings, |model, cx| {
+        model.change_preference(Change::Terminal("scroll-discrete", "4.5".into()), cx);
+        model.change_preference(Change::Terminal("cursor-style", "bar".into()), cx);
+        model.change_preference(Change::Field("background", "not a color".into()), cx);
+        model.change_preference(Change::Directory(NewPaneDirectory::Current), cx);
+        assert!(
+            settings_view(model)
+                .read(cx)
+                .errors
+                .contains_key("background")
+        );
+    });
+    click_preference(settings, "settings-search");
+    settings.simulate_input("reset terminal settings");
+    click_preference(settings, "settings-button-terminal-reset");
+    assert!(settings.has_pending_prompt());
+    settings.simulate_prompt_answer("Cancel");
+    settings.run_until_parked();
+    model.read_with(settings, |model, _| {
+        assert_eq!(model.terminal.options.scroll_discrete, 4.5);
+    });
+    click_preference(settings, "settings-button-terminal-reset");
+    settings.simulate_prompt_answer("Reset");
+    settings.run_until_parked();
+    model.read_with(settings, |model, cx| {
+        assert_eq!(model.terminal, TerminalSettings::default());
+        assert_eq!(
+            TerminalSettings::load_native(&path).expect("saved defaults"),
+            model.terminal
+        );
+        assert_eq!(
+            model.settings.panes.new_pane_directory,
+            NewPaneDirectory::Project
+        );
+        let pane = model.grids.values().next().expect("pane").view.read(cx);
+        assert_eq!(pane.terminal, model.terminal);
+        assert!(model.palette.cursor_style.is_none());
+        assert!(settings_view(model).read(cx).errors.is_empty());
+    });
+    assert_eq!(
+        muxy_app_core::settings::Settings::load(&app_settings)
+            .expect("saved app settings")
+            .panes
+            .new_pane_directory,
+        NewPaneDirectory::Project
+    );
+    click_preference(settings, "settings-button-terminal-reset");
+    assert!(!settings.has_pending_prompt());
+}
+
+#[gpui::test]
 fn terminal_key_bindings_apply_atomically_and_never_take_a_command_shortcut(
     cx: &mut TestAppContext,
 ) {
@@ -373,5 +433,61 @@ fn hand_edits_to_terminal_settings_load_when_settings_regains_focus(cx: &mut Tes
                 .errors
                 .contains_key("configuration")
         );
+    });
+}
+
+#[gpui::test]
+fn application_errors_leave_settings_when_dismissed_in_either_window(cx: &mut TestAppContext) {
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (model, settings) = settings_window(boot, cx);
+    let shown = |settings: &mut VisualTestContext| {
+        settings.run_until_parked();
+        model.read_with(settings, |model, cx| {
+            settings_view(model)
+                .read(cx)
+                .errors
+                .get("application")
+                .cloned()
+        })
+    };
+
+    model.update(settings, |model, cx| {
+        model.fail("couldn't commit".into(), cx);
+    });
+    assert_eq!(shown(settings).as_deref(), Some("couldn't commit"));
+    click_preference(settings, "settings-dismiss-application-error");
+    assert_eq!(shown(settings), None);
+    model.update(settings, |model, cx| {
+        assert!(model.visible_banner().is_none());
+        model.set_configuration_error(Some("broken terminal.toml".into()));
+        cx.notify();
+    });
+    assert_eq!(shown(settings), None);
+
+    model.update(settings, |model, cx| {
+        model.fail_detail("couldn't commit".into(), "nothing staged", cx);
+    });
+    assert_eq!(shown(settings).as_deref(), Some("couldn't commit"));
+    model.update(settings, AppModel::dismiss_problem);
+    assert_eq!(shown(settings), None);
+    model.read_with(settings, |model, _| {
+        assert_eq!(
+            model.visible_banner(),
+            Some((BannerKind::Configuration, "broken terminal.toml"))
+        );
+    });
+}
+
+#[gpui::test]
+fn configuration_errors_in_settings_can_be_dismissed(cx: &mut TestAppContext) {
+    let (boot, _requests) = stub_boot(AppState::bootstrap().expect("state"));
+    let (model, settings) = settings_window(boot, cx);
+    let view = model.read_with(settings, |model, _| settings_view(model));
+    view.update(settings, |view, cx| {
+        view.set_error("configuration", Some("Could not open terminal.toml"), cx);
+    });
+    click_preference(settings, "settings-dismiss-configuration-error");
+    view.read_with(settings, |view, _| {
+        assert!(!view.errors.contains_key("configuration"));
     });
 }
