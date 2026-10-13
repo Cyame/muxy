@@ -18,6 +18,10 @@ Oh My Pi detection recognizes `⎋` working messages and the older
 no longer keeps the session busy. Detection reads terminal text, not OMP
 lifecycle events, so customized output may not be recognized.
 
+For foreground `omp` and `oh-my-pi` processes, automatic terminal titles omit
+the leading `π ` prefix. The provider icon remains visible, and custom tab
+titles are unchanged.
+
 ## States
 
 | State | Meaning |
