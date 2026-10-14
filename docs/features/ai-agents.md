@@ -12,11 +12,13 @@ OpenCode, Pi, and Xal.
 The server spots them from the running program and what's on screen.
 Recognition is best effort.
 
-Oh My Pi detection recognizes `⎋` working messages and the older
-`Working… [esc]` spinner. In `omp --print` sessions, a final non-empty
+Oh My Pi detection reads its OSC terminal-title run state: a spinner while
+working, `!` when waiting, and `>` when idle. It also recognizes optional OSC
+progress reports, `⎋` working messages, and the older `Working… [esc]` spinner.
+In `omp --print` sessions, a final non-empty
 `Working...` line signals work; once output follows it, that progress line
-no longer keeps the session busy. Detection reads terminal text, not OMP
-lifecycle events, so customized output may not be recognized.
+no longer keeps the session busy. Detection uses terminal escape sequences
+and screen text, so disabling or customizing these signals can affect recognition.
 
 For foreground `omp` and `oh-my-pi` processes, automatic terminal titles omit
 the leading `π ` prefix. The provider icon remains visible, and custom tab

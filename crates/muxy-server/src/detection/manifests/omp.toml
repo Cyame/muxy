@@ -1,8 +1,37 @@
 id = "omp"
-version = "2026.10.13.1"
+version = "2026.10.14.1"
 min_engine_version = 1
-updated_at = "2026-10-13T00:00:00Z"
+updated_at = "2026-10-14T00:00:00Z"
 aliases = ["oh-my-pi"]
+
+[[rules]]
+id = "osc_title_blocked"
+state = "blocked"
+priority = 300
+region = "osc_title"
+regex = ['^π !(?: |$)']
+
+[[rules]]
+id = "osc_title_working"
+state = "working"
+priority = 150
+region = "osc_title"
+regex = ['^π [\x{2800}-\x{28FF}○◔◑◕●\\|/:-](?: |$)']
+
+[[rules]]
+id = "osc_title_idle"
+state = "idle"
+priority = 150
+region = "osc_title"
+visible_idle = true
+regex = ['^π >(?: |$)']
+
+[[rules]]
+id = "osc_progress_working"
+state = "working"
+priority = 120
+region = "osc_progress"
+regex = ['^4;1;-1$']
 
 [[rules]]
 id = "working_row"

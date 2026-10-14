@@ -363,6 +363,121 @@ fn long_blank_redraw_preserves_cycle_and_blocked_state() {
 }
 
 #[test]
+fn omp_osc_title_states_override_stale_screen_and_progress() {
+    let mut detector = Detector::default();
+    let now = Instant::now();
+    for (elapsed, title, expected, completed) in [
+        (0, "π ⠋ Inspect files", AgentState::Working, false),
+        (100, "π ⠙ Inspect files", AgentState::Working, false),
+        (200, "π ! Inspect files", AgentState::Blocked, false),
+        (300, "π ⠹ Inspect files", AgentState::Working, false),
+        (400, "π > Inspect files", AgentState::Working, false),
+        (700, "π > Inspect files", AgentState::Idle, true),
+        (1000, "π > Inspect files", AgentState::Idle, false),
+    ] {
+        assert_eq!(
+            detector.update(
+                Some(AgentProvider::OhMyPi),
+                "  ⎋ Inspecting files\n π · model · project".into(),
+                title,
+                "4;1;-1",
+                now + Duration::from_millis(elapsed),
+            ),
+            completed,
+            "{title:?}",
+        );
+        assert_eq!(detector.state, expected, "{title:?}");
+    }
+}
+
+#[test]
+fn omp_title_spinner_variants_do_not_confuse_labels_with_state() {
+    for spinner in ["⠋", "⠁", "◔", "-", "\\", "|", "/", ":"] {
+        for label in ["", " Inspect files"] {
+            let title = format!("π {spinner}{label}");
+            assert_eq!(
+                detect(
+                    AgentProvider::OhMyPi,
+                    DetectionInput {
+                        screen: "",
+                        osc_title: &title,
+                        osc_progress: ""
+                    },
+                ),
+                Some((AgentState::Working, false)),
+                "{title:?}",
+            );
+        }
+    }
+    for title in [
+        "π: ⠋ Inspect files",
+        "π !important",
+        "π >file",
+        "π ⠋file",
+        "Session π ⠋ Inspect files",
+    ] {
+        assert_eq!(
+            detect(
+                AgentProvider::OhMyPi,
+                DetectionInput {
+                    screen: "",
+                    osc_title: title,
+                    osc_progress: ""
+                },
+            ),
+            Some((AgentState::Idle, false)),
+            "{title:?}",
+        );
+    }
+}
+
+#[test]
+fn omp_progress_reports_support_disabled_title_state() {
+    let mut detector = Detector::default();
+    let now = Instant::now();
+    for (elapsed, progress, expected, completed) in [
+        (0, "4;1;-1", AgentState::Working, false),
+        (1000, "4;1;-1", AgentState::Working, false),
+        (1100, "4;0;0", AgentState::Working, false),
+        (1800, "4;0;0", AgentState::Idle, true),
+        (2000, "4;0;0", AgentState::Idle, false),
+    ] {
+        assert_eq!(
+            detector.update(
+                Some(AgentProvider::OhMyPi),
+                "Session output".into(),
+                "π: Inspect files",
+                progress,
+                now + Duration::from_millis(elapsed),
+            ),
+            completed,
+        );
+        assert_eq!(detector.state, expected);
+    }
+}
+
+#[test]
+fn omp_working_osc_signals_do_not_hide_visible_approval() {
+    for screen in [
+        "[↑ ↓ to navigate, ⏎ to select, ⎋ to deny]",
+        "╭─ Allow tool: bash ─╮\n│ ❯ Approve │\n│ Deny │\n│ ↑ ↓ navigate  ⏎ select  ⎋ cancel │",
+    ] {
+        assert_eq!(
+            detect(
+                AgentProvider::OhMyPi,
+                DetectionInput {
+                    screen,
+                    osc_title: "π ⠋ Inspect files",
+                    osc_progress: "4;1;-1"
+                },
+            ),
+            Some((AgentState::Blocked, false)),
+            "{screen:?}",
+        );
+    }
+}
+
+#[test]
 fn omp_headless_progress_completes_with_progress_still_in_history() {
     let mut detector = Detector::default();
     let now = Instant::now();
