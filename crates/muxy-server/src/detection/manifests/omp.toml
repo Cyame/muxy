@@ -1,7 +1,7 @@
 id = "omp"
-version = "2026.10.12.1"
+version = "2026.10.13.1"
 min_engine_version = 1
-updated_at = "2026-10-12T00:00:00Z"
+updated_at = "2026-10-13T00:00:00Z"
 aliases = ["oh-my-pi"]
 
 [[rules]]
@@ -42,6 +42,18 @@ state = "blocked"
 priority = 200
 region = "whole_recent"
 contains = ["to navigate, ⏎ to select, ⎋ to deny"]
+
+[[rules]]
+id = "approval_selector"
+state = "blocked"
+priority = 200
+region = "whole_recent"
+contains = ["Allow tool:"]
+line_regex = [
+  '^\s*│?\s*(?:❯\s*)?Approve\s*│?\s*$',
+  '^\s*│?\s*(?:❯\s*)?Deny\s*│?\s*$',
+  'navigate\s+⏎ select\s+⎋ cancel',
+]
 
 [[rules]]
 id = "status_line_idle"

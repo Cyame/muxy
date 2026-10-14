@@ -424,6 +424,115 @@ fn omp_trimmed_intent_preserves_work_until_approval_and_completion() {
 }
 
 #[test]
+fn omp_current_approval_requests_attention_until_work_resumes() {
+    use muxy_protocol::{ActivityKind, AgentActivity, ProjectId};
+
+    let approval = "╭─ Allow tool: bash ───────────────────────────╮\n\
+        │ Command: echo hello                         │\n\
+        │ ❯ Approve                                   │\n\
+        │   Deny                                      │\n\
+        │ ↑ ↓ navigate  ⏎ select  ⎋ cancel             │\n\
+        ╰─────────────────────────────────────────────╯\n\
+          ⎋ Working…\n ⠋ 2s · model · project";
+    let deny_selected = approval
+        .replace("❯ Approve", "  Approve")
+        .replace("  Deny", "❯ Deny")
+        .replace("⠋ 2s", "⠙ 3s");
+    let mut detector = Detector::default();
+    let activity = crate::activity::Activity::default();
+    let now = Instant::now();
+    for (elapsed, screen, expected, event) in [
+        (0, "  ⎋ Working…", AgentState::Working, None),
+        (
+            100,
+            approval,
+            AgentState::Blocked,
+            Some(ActivityKind::Attention),
+        ),
+        (
+            1000,
+            deny_selected.as_str(),
+            AgentState::Blocked,
+            Some(ActivityKind::Attention),
+        ),
+        (
+            1100,
+            "  ⎋ Applying changes",
+            AgentState::Working,
+            Some(ActivityKind::Attention),
+        ),
+        (
+            1200,
+            " π · model · project",
+            AgentState::Working,
+            Some(ActivityKind::Attention),
+        ),
+        (
+            1500,
+            " π · model · project",
+            AgentState::Idle,
+            Some(ActivityKind::Completed),
+        ),
+        (
+            2000,
+            " π · model · project",
+            AgentState::Idle,
+            Some(ActivityKind::Completed),
+        ),
+    ] {
+        let completed = detector.update(
+            Some(AgentProvider::OhMyPi),
+            screen.into(),
+            "",
+            "",
+            now + Duration::from_millis(elapsed),
+        );
+        assert_eq!(detector.state, expected, "{screen:?}");
+        assert_eq!(completed, elapsed == 1500, "{screen:?}");
+        activity.update(
+            AgentActivity {
+                session: std::num::NonZeroU64::MIN.into(),
+                project: ProjectId::from_u128(1),
+                provider: AgentProvider::OhMyPi,
+                state: detector.state,
+            },
+            completed,
+        );
+        let events: Vec<_> = activity
+            .snapshot()
+            .events
+            .iter()
+            .map(|event| event.kind)
+            .collect();
+        assert_eq!(events, event.into_iter().collect::<Vec<_>>(), "{screen:?}");
+    }
+}
+
+#[test]
+fn omp_generic_selectors_and_approval_text_do_not_request_attention() {
+    for screen in [
+        "Choose a session\n❯ project-a\n  project-b\n↑ ↓ navigate  ⏎ select  ⎋ cancel",
+        "Allow tool: bash\nApprove or Deny the command to continue.\n↑ ↓ navigate  ⏎ select  ⎋ cancel",
+        "Allow tool: bash\n❯ Approve\n  Deny\nCommand approved.\n  ⎋ Applying changes",
+        "Confirm action\n❯ Approve\n  Deny\n↑ ↓ navigate  ⏎ select  ⎋ cancel",
+    ] {
+        assert_ne!(
+            detect(
+                AgentProvider::OhMyPi,
+                DetectionInput {
+                    screen,
+                    osc_title: "",
+                    osc_progress: "",
+                },
+            )
+            .map(|result| result.0),
+            Some(AgentState::Blocked),
+            "{screen:?}"
+        );
+    }
+}
+
+#[test]
 fn omp_legacy_spinner_survives_animation_and_completes_once() {
     let mut detector = Detector::default();
     let now = Instant::now();
