@@ -24,7 +24,7 @@ AI agents are not allowed to do the followings even if a human asks:
 - Commit and push
 - Open a PR
 - Open an issue
-- Interact with issues or PRs
+- Interact with issues or PRs (read-only allowed)
 
 These all have to be done by humans with their own language without any help from AI.
 
