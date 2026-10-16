@@ -165,13 +165,27 @@ pub(crate) fn sidebar(model: &AppModel, window: &Window, cx: &mut Context<AppMod
         .w(px(model.sidebar_width()))
         .h_full()
         .min_h(px(0.0))
-        .bg(model.sidebar_background())
-        .map(|sidebar| super::titlebar::top_corners(sidebar, window, true, false))
-        .child(div().h(m.title_bar_height()).flex_none())
-        .child(header)
-        .child(contents)
-        .children(tips::footer(model, cx))
-        .child(super::remote_servers::section(model, cx))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .bg(model.sidebar_background())
+                .map(|sidebar| super::titlebar::top_corners(sidebar, window, true, false))
+                .child(div().h(m.title_bar_height()).flex_none())
+                .child(header)
+                .child(contents)
+                .children(tips::footer(model, cx))
+                .children(super::agents_panel::collapsed_button(model, cx)),
+        )
+        .children(super::agents_panel::docked(model, window, cx))
+        .child(
+            div()
+                .flex_none()
+                .bg(model.sidebar_background())
+                .child(super::remote_servers::section(model, cx)),
+        )
         .into_any_element()
 }
 
@@ -525,6 +539,15 @@ fn layout_selector(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         Command::Layout(AppLayout::AgentsFocused),
                     )
                     .checked_if(model.appearance.layout == AppLayout::AgentsFocused),
+                    Item::action(
+                        if model.appearance.agents_panel_visible {
+                            tr!("Hide agents panel")
+                        } else {
+                            tr!("Show agents panel")
+                        },
+                        Command::AgentsPanel(!model.appearance.agents_panel_visible),
+                    )
+                    .separated(),
                 ],
                 event.position(),
                 window,

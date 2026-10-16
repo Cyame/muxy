@@ -45,6 +45,7 @@ actions!(
         NextProject,
         AddProject,
         ToggleSidebar,
+        ToggleAgentsPanel,
         ToggleFullScreen,
         ToggleThemePicker,
         ToggleCommandPalette,
@@ -107,6 +108,7 @@ fn workspace_bindings(keymap: &impl muxy_core::shortcuts::ShortcutSettings) -> V
     registry.register(ShortcutId::NewWorktree, &NewWorktree);
     registry.register(ShortcutId::SwitchWorktree, &SwitchWorktree);
     registry.register(ShortcutId::ToggleSidebar, &ToggleSidebar);
+    registry.register(ShortcutId::ToggleAgentsPanel, &ToggleAgentsPanel);
     registry.register(ShortcutId::ToggleFullScreen, &ToggleFullScreen);
     registry.register(ShortcutId::ToggleThemePicker, &ToggleThemePicker);
     registry.register(ShortcutId::ToggleCommandPalette, &ToggleCommandPalette);
@@ -450,6 +452,9 @@ fn action_handlers(cx: &mut Context<AppModel>) -> gpui::Div {
         .on_action(
             cx.listener(|model, _: &ToggleSidebar, window, cx| model.toggle_sidebar(window, cx)),
         )
+        .on_action(cx.listener(|model, _: &ToggleAgentsPanel, window, cx| {
+            model.toggle_agents_panel(window, cx);
+        }))
         .on_action(cx.listener(|_, _: &ToggleFullScreen, window, _| window.toggle_fullscreen()))
         .on_action(cx.listener(|model, _: &ToggleThemePicker, window, cx| {
             model.open_theme_picker(window, cx);
@@ -787,6 +792,12 @@ pub(crate) fn register_commands(
             tr_key!("Toggle Sidebar"),
             ToggleSidebar,
         ),
+        action(
+            model,
+            ShortcutId::ToggleAgentsPanel,
+            tr_key!("Toggle Agents Panel"),
+            ToggleAgentsPanel,
+        ),
     ] {
         registry.register(command);
     }
@@ -874,7 +885,8 @@ impl AppModel {
             && (self.focus_requested
                 || (self.active_pane().is_none()
                     && self.composer.view.is_none()
-                    && self.webviews.panels.is_empty()))
+                    && self.webviews.panels.is_empty()
+                    && !self.agents_panel.focus.contains_focused(window, cx)))
         {
             match self.focus_return.take().and_then(|focus| focus.upgrade()) {
                 Some(focus) => focus.focus(window),
@@ -905,6 +917,7 @@ impl AppModel {
 }
 
 impl Render for AppModel {
+    #[allow(clippy::too_many_lines, reason = "One workspace layout")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::profiler::span(crate::profiler::Metric::WorkspaceRender);
         {
@@ -996,6 +1009,7 @@ impl Render for AppModel {
             .child(self.floating_composer(window, cx))
             .child(self.voice_panel())
             .children(super::banners::render(self, window, cx))
+            .children(super::agents_panel::floating(self, window, cx))
             .child(titlebar::overlay(overlays::layer(self, window, cx), window))
             .child(self.apply_webview_regions(cx));
         #[cfg(target_os = "linux")]

@@ -32,6 +32,14 @@ pub enum SidebarCollapsedStyle {
     Hidden,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentsPanelGrouping {
+    #[default]
+    Agents,
+    Worktrees,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 #[allow(
@@ -63,6 +71,11 @@ pub struct Appearance {
     pub extension_sidebar: String,
     /// The app language as `<extension>:<localization>`; empty for English.
     pub language: String,
+    pub agents_panel_visible: bool,
+    pub agents_panel_detached: bool,
+    pub agents_panel_frame: Option<[f32; 4]>,
+    pub agents_panel_docked_height: Option<f32>,
+    pub agents_panel_grouping: AgentsPanelGrouping,
 }
 
 impl Default for Appearance {
@@ -88,6 +101,11 @@ impl Default for Appearance {
             sidebar_project_order: ProjectOrder::default(),
             extension_sidebar: String::new(),
             language: String::new(),
+            agents_panel_visible: false,
+            agents_panel_detached: false,
+            agents_panel_frame: None,
+            agents_panel_docked_height: None,
+            agents_panel_grouping: AgentsPanelGrouping::default(),
         }
     }
 }
