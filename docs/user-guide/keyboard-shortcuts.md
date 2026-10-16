@@ -26,6 +26,7 @@ For the terminal UI, see [Terminal UI keys](../features/terminal-ui.md#keys).
 | --- | --- |
 | Add project | `Cmd+O` |
 | New worktree | `Cmd+Opt+N` |
+| Switch worktree | `Cmd+Opt+W` |
 | Next / previous project | `Ctrl+]` / `Ctrl+[` |
 | Go to project 1–9 | `Ctrl+1`–`Ctrl+9` |
 | Back / forward | `Cmd+Ctrl+Left` / `Cmd+Ctrl+Right` |

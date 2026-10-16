@@ -114,6 +114,7 @@ pub enum ShortcutId {
     NewHomeTab,
     NewTabInProject,
     NewWorktree,
+    SwitchWorktree,
     ToggleSidebar,
     ToggleFullScreen,
     ToggleThemePicker,
@@ -556,6 +557,12 @@ pub const ALL: &[Shortcut] = &[
     Shortcut {
         id: "new_worktree",
         keys: &["cmd-alt-n"],
+        contexts: &[Some("WorkspaceTabs")],
+        key_contexts: &[&[Some("WorkspaceTabs")]],
+    },
+    Shortcut {
+        id: "switch_worktree",
+        keys: &["cmd-alt-w"],
         contexts: &[Some("WorkspaceTabs")],
         key_contexts: &[&[Some("WorkspaceTabs")]],
     },
