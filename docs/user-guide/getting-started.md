@@ -1,5 +1,11 @@
 # Getting Started
 
+Install: [macOS](#macos-desktop-app) · [Linux](#linux-desktop-app) ·
+[CLI and server only](#cli-and-server-only)
+
+After installing: [First steps](#first-steps) · [Upgrading from 1.x](#upgrading-from-muxy-1x) ·
+[Beta builds](#beta)
+
 ## Requirements
 
 | Part | Runs on |
@@ -30,15 +36,109 @@ keep going through most updates.
 
 ## Linux desktop app
 
-On Ubuntu 24.04, the [quick installer](linux.md#quick-installer-with-in-app-updates)
-selects the latest **stable** release for your architecture and supports in-app
-updates. Alternatively, download a **`.deb` package** or **AppImage** from the
-[latest stable release](https://github.com/muxy-app/muxy/releases/latest).
-All three include the desktop app, CLI and server, on x86_64 and ARM64.
+Linux support is **experimental**, targeting Ubuntu 24.04 on x86_64 and ARM64,
+with glibc 2.39 or newer and a working Vulkan driver. See the
+[platform limits and WebKit sandbox setup](../tech/constraints.md#experimental-linux-desktop).
 
-See [Linux desktop](linux.md) for install commands, optional beta builds, updates
-and removal. Desktop packages require glibc 2.39; standalone CLI/server packages
-retain the lower floor below.
+Choose the [quick installer](#quick-installer-with-in-app-updates) for in-app
+updates, a [Debian package](#debian-package), or an [AppImage](#appimage).
+All three include the desktop app, CLI and server. Use one format per channel
+to avoid conflicting CLI commands.
+
+### Quick installer with in-app updates
+
+Install the Ubuntu dependencies once:
+
+```sh
+sudo apt update
+sudo apt install curl python3 ca-certificates libfreetype6 libfontconfig1 libxcb1 \
+  libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libvulkan1 mesa-vulkan-drivers \
+  libwebkit2gtk-4.1-0 xdg-utils xdg-desktop-portal bubblewrap xdg-dbus-proxy
+```
+
+Install the **latest stable release** as your normal user, without `sudo`.
+The installer detects your architecture and verifies the download:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' \
+  https://github.com/muxy-app/muxy/releases/latest/download/install-desktop-linux.py \
+  | python3 - install
+```
+
+Open **Muxy** from Applications. The app, CLI and server install into
+`~/.local/share/muxy-desktop` by default. Add `~/.local/bin` to your shell's
+`PATH` to use `muxy <folder>` from a terminal.
+
+### Debian package
+
+Download `muxy-desktop_<version>_amd64.deb` or
+`muxy-desktop_<version>_arm64.deb` from the
+[latest stable release](https://github.com/muxy-app/muxy/releases/latest).
+Use `dpkg --print-architecture` to check which you need. In your download
+directory, replace the filename below with your download:
+
+```sh
+sudo apt install './muxy-desktop_<version>_amd64.deb'
+```
+
+APT installs the dependencies and adds **Muxy** to Applications, with `muxy`
+and `muxy-server` in `/usr/bin`.
+
+### AppImage
+
+Install the [runtime libraries above](#quick-installer-with-in-app-updates), then
+download `Muxy-<version>-linux-x86_64.AppImage` or
+`Muxy-<version>-linux-arm64.AppImage` from the
+[latest stable release](https://github.com/muxy-app/muxy/releases/latest).
+Use `uname -m` to check: `aarch64` means ARM64. Replace the filename below with
+your download and run it without `sudo`:
+
+```sh
+chmod +x './Muxy-<version>-linux-x86_64.AppImage'
+'./Muxy-<version>-linux-x86_64.AppImage'
+```
+
+The first launch adds **Muxy** to Applications. AppImage uses **system WebKitGTK**.
+If FUSE is unavailable, append `--appimage-extract-and-run` when launching it.
+
+Muxy keeps an unpacked copy in
+`${XDG_DATA_HOME:-$HOME/.local/share}/muxy-appimage/<bundle-id>` so terminals can
+keep running after the window closes. This takes extra disk space. Use
+`./Muxy-<version>-linux-x86_64.AppImage --cli <arguments>` for the bundled CLI,
+or choose **Install Command Line Tool…** in the app to link it into `~/.local/bin`.
+
+### Updates
+
+- **Quick installer:** the app checks automatically; **Check for Updates** checks
+  now. Stable installs stay on stable; beta installs stay on beta.
+- **Debian package:** stop the server and quit Muxy, then download the newer `.deb`
+  and install it with `sudo apt install`. There is no Muxy APT repository, so
+  `apt upgrade` alone does not update Muxy.
+- **AppImage:** quit the app, then download and run the newer file. Running
+  terminals stay alive. If you linked the CLI, choose **Install Command Line Tool…**
+  again from the new app.
+
+Debian packages and AppImages do not use the in-app updater.
+
+### Remove
+
+Stop the local server in **Settings → Server**, then quit Muxy. Stopping the
+server ends its running terminals. Removal keeps your settings, projects and
+saved session data.
+
+- **Quick installer:** run the command below. For beta, replace `muxy-desktop`
+  with `muxy-desktop-beta`.
+
+  ```sh
+  python3 "${XDG_DATA_HOME:-$HOME/.local/share}/muxy-desktop/current/install.py" uninstall
+  ```
+
+- **Debian package:** run `sudo apt remove muxy-desktop` (or `muxy-desktop-beta`).
+- **AppImage:** delete the downloaded file, its matching unpacked copy listed
+  above, and any CLI link or Applications entry pointing into that copy. The entry
+  is in `${XDG_DATA_HOME:-$HOME/.local/share}/applications/com.muxy.app.desktop`
+  (`com.muxy-beta.app.desktop` for beta). Do not delete a copy still used by
+  another running app or server.
 
 ## CLI and server only
 
@@ -97,11 +197,18 @@ working; see [Coming from 1.x](../extensions/get-started.md#coming-from-1x).
 
 ## Beta
 
-The beta gets new features first. It installs as a separate app, **Muxy Beta**,
-next to Muxy, keeps its own settings and data, and updates to each new beta.
-Download it from the newest `v<version>-beta.<N>` pre-release on the
-[releases page](https://github.com/muxy-app/muxy/releases). For the CLI and
-server, give the install script a beta version, such as `2.1.0-beta.1143`.
+The beta gets new features first. **Muxy Beta** installs alongside stable,
+with separate settings and session data.
+
+- **macOS:** download the newest `v<version>-beta.<N>` pre-release from the
+  [releases page](https://github.com/muxy-app/muxy/releases). The app updates to
+  each new beta.
+- **Linux:** append `--channel beta` to the [quick-installer command](#quick-installer-with-in-app-updates)
+  (`python3 - install --channel beta`), or download a beta `.deb` or AppImage
+  from the releases page. Use the same [update method](#updates) as stable.
+  The quick installer and Debian package provide `muxy-beta` and `muxy-server-beta`.
+- **CLI and server only:** give the [install script](#install-script) a beta
+  version, such as `2.1.0-beta.1143`.
 
 ## First steps
 

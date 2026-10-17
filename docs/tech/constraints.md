@@ -123,8 +123,8 @@ with an atomic `current` link, verified downloads and the shared session-compati
 rules. Debian packages are managed by APT; AppImages are replaced manually. Neither
 uses the in-app updater. AppImages retain a private, unpacked copy so background
 servers and CLI commands do not depend on a temporary FUSE mount.
-See [Linux desktop installation and updates](../user-guide/linux.md). The
-package baseline is Ubuntu 24.04 and glibc 2.39; this does not change the
+See [Linux desktop installation and updates](../user-guide/getting-started.md#linux-desktop-app).
+The package baseline is Ubuntu 24.04 and glibc 2.39; this does not change the
 standalone CLI/server floor of 2.35.
 Clipboard image submission is unavailable because the current
 clipboard API cannot safely preserve all MIME types and detect ownership
