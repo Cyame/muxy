@@ -86,41 +86,38 @@ impl AppModel {
     }
 }
 
-fn trailing(entry: &Entry, model: &AppModel) -> AnyElement {
+fn trailing(entry: &Entry, model: &AppModel) -> Option<AnyElement> {
     let m = model.metrics;
     match entry {
-        Entry::Agent(agent) => div()
-            .flex_none()
-            .text_size(m.font_footnote())
-            .text_color(status_color(agent.status, model))
-            .child(status_label(agent.status))
-            .into_any_element(),
-        Entry::Worktree { counts, .. } => div()
-            .flex()
-            .flex_none()
-            .gap(m.spacing2())
-            .children(
-                AgentStatus::ALL
-                    .into_iter()
-                    .zip(counts)
-                    .filter(|(_, count)| **count > 0)
-                    .map(|(status, count)| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(m.spacing1())
-                            .text_size(m.font_footnote())
-                            .text_color(status_color(status, model))
-                            .child(
-                                div()
-                                    .size(m.scaled(6.0))
-                                    .rounded_full()
-                                    .bg(status_color(status, model)),
-                            )
-                            .child(count.to_string())
-                    }),
-            )
-            .into_any_element(),
+        Entry::Agent(_) => None,
+        Entry::Worktree { counts, .. } => Some(
+            div()
+                .flex()
+                .flex_none()
+                .gap(m.spacing2())
+                .children(
+                    AgentStatus::ALL
+                        .into_iter()
+                        .zip(counts)
+                        .filter(|(_, count)| **count > 0)
+                        .map(|(status, count)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(m.spacing1())
+                                .text_size(m.font_footnote())
+                                .text_color(status_color(status, model))
+                                .child(
+                                    div()
+                                        .size(m.scaled(6.0))
+                                        .rounded_full()
+                                        .bg(status_color(status, model)),
+                                )
+                                .child(count.to_string())
+                        }),
+                )
+                .into_any_element(),
+        ),
     }
 }
 
@@ -209,7 +206,7 @@ fn entry_row(
                         .child(detail)
                 })),
         )
-        .child(trailing)
+        .children(trailing)
         .into_any_element()
 }
 
