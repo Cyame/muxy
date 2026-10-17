@@ -127,6 +127,81 @@ fn the_panel_lists_each_shown_session_once_most_urgent_first(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn long_agent_labels_stay_inside_the_card_in_every_placement(cx: &mut TestAppContext) {
+    let (view, cx, fixture) = agents(cx);
+    cx.simulate_resize(size(px(1200.0), px(800.0)));
+    let agent = view.update(cx, |model, _| {
+        let agent = model
+            .running_agents()
+            .into_iter()
+            .find(|agent| agent.pane == fixture.panes[2])
+            .expect("worktree agent");
+        model
+            .state
+            .set_tab_title(
+                agent.tab,
+                Some("Investigate a very long agent task title ".repeat(10)),
+            )
+            .expect("title");
+        model
+            .state
+            .rename_project(fixture.root, &"long-project-name-".repeat(10))
+            .expect("project name");
+        model
+            .state
+            .rename_project(fixture.worktree, &"long-worktree-name-".repeat(10))
+            .expect("worktree name");
+        agent
+    });
+    for (dock, expanded, detached) in [
+        (AgentsPanelDock::Left, true, false),
+        (AgentsPanelDock::Right, true, false),
+        (AgentsPanelDock::Left, false, false),
+        (AgentsPanelDock::Left, true, true),
+    ] {
+        for grouping in [AgentsPanelGrouping::Agents, AgentsPanelGrouping::Worktrees] {
+            view.update(cx, |model, cx| {
+                model.appearance.agents_panel_visible = true;
+                model.appearance.agents_panel_dock = dock;
+                model.appearance.sidebar_expanded = expanded;
+                model.appearance.agents_panel_detached = detached;
+                model.appearance.agents_panel_grouping = grouping;
+                model.appearance.agents_panel_right_width = Some(220.0);
+                model.appearance.agents_panel_frame = Some([80.0, 80.0, 220.0, 360.0]);
+                model.overlay = (!expanded).then_some(Overlay::Agents);
+                cx.notify();
+            });
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            let key = match grouping {
+                AgentsPanelGrouping::Agents => EntryKey::Agent(agent.server, agent.session),
+                AgentsPanelGrouping::Worktrees => EntryKey::Worktree(fixture.worktree),
+            };
+            let row = cx
+                .debug_bounds(format!("agents-panel-row-{key}").leak())
+                .expect("agent card");
+            let panel = cx.debug_bounds("agents-panel").expect("panel");
+            let max_line_height = view.read_with(cx, |model, _| model.metrics.font_body() * 2.0);
+            assert!(row.right() <= panel.right(), "card fits in the panel");
+            for label in ["title", "detail"] {
+                if label == "detail" && grouping == AgentsPanelGrouping::Worktrees {
+                    continue;
+                }
+                let bounds = cx
+                    .debug_bounds(format!("agents-panel-{label}-{key}").leak())
+                    .expect("label");
+                assert!(bounds.right() < row.right(), "{label} fits inside the card");
+                assert!(bounds.size.width > px(0.0), "{label} remains visible");
+                assert!(
+                    bounds.size.height < max_line_height,
+                    "{label} stays on one line"
+                );
+            }
+        }
+    }
+}
+
+#[gpui::test]
 fn the_shortcut_shows_and_focuses_then_hides_and_keys_open_only_live_panes(
     cx: &mut TestAppContext,
 ) {

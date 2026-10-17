@@ -193,14 +193,18 @@ fn entry_row(
                 .flex_col()
                 .child(
                     div()
-                        .truncate()
+                        .debug_selector(move || format!("agents-panel-title-{key}"))
+                        .text_ellipsis()
+                        .line_clamp(1)
                         .text_size(m.font_body())
                         .text_color(theme.fg)
                         .child(title),
                 )
                 .children(detail.filter(|detail| !detail.is_empty()).map(|detail| {
                     div()
-                        .truncate()
+                        .debug_selector(move || format!("agents-panel-detail-{key}"))
+                        .text_ellipsis()
+                        .line_clamp(1)
                         .text_size(m.font_footnote())
                         .text_color(theme.fg_muted)
                         .child(detail)
