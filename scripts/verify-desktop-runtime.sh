@@ -17,7 +17,7 @@ docker run --rm --cap-add SYS_PTRACE -v "$ROOT:/src:ro" -v "$PACKAGES:/packages:
     PACKAGE=muxy-desktop
     [[ "$VERSION" != *-beta.* ]] || PACKAGE=muxy-desktop-beta
     MUXY_DISPOSABLE_PACKAGE_TEST=1 python3 /src/scripts/verify-desktop-formats.py deb \
-      "/packages/${PACKAGE}_${VERSION/-beta./~beta.}_${DEB_ARCH}.deb" --version "$VERSION"
+      "/packages/${PACKAGE}_${VERSION}_${DEB_ARCH}.deb" --version "$VERSION"
     runuser -u package-check -- dbus-run-session -- xvfb-run -a \
       python3 /src/scripts/verify-desktop-formats.py appimage \
       "/packages/Muxy-$VERSION-linux-$ARCH.AppImage" --version "$VERSION" --desktop

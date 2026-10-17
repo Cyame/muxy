@@ -51,7 +51,7 @@ def package_deb(version, arch, payload, output):
     name, identifier, suffix = identity(version)
     package = f"muxy-desktop{suffix}"
     deb_arch, _ = ARCHITECTURES[arch]
-    archive = output / f"{package}_{debian_version(version)}_{deb_arch}.deb"
+    archive = output / f"{package}_{version}_{deb_arch}.deb"
     if archive.exists():
         raise ValueError(f"Output already exists: {archive}")
     requirements = json.loads((payload / "manifest.json").read_text())["requirements"]

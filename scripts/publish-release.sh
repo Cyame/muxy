@@ -55,7 +55,7 @@ for ARCH in arm64 x86_64; do
     [[ "$ARCH" != x86_64 ]] || DEB_ARCH=amd64
     DEB_PACKAGE=muxy-desktop
     [[ "$CHANNEL" != beta ]] || DEB_PACKAGE=muxy-desktop-beta
-    ASSETS+=("${DEB_PACKAGE}_${VERSION/-beta./~beta.}_${DEB_ARCH}.deb")
+    ASSETS+=("${DEB_PACKAGE}_${VERSION}_${DEB_ARCH}.deb")
     # A beta may skip Intel; a stable release is also how Intel Macs leave Muxy 1.x.
     if [[ "$CHANNEL" == beta && "$ARCH" == x86_64 && ! -e "Muxy-${VERSION}-${ARCH}.dmg" && ! -e "muxy-${VERSION}-macos-${ARCH}.zip" ]]; then
         continue
