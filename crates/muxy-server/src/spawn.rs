@@ -1,5 +1,5 @@
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use muxy_protocol::ErrorCode;
@@ -91,5 +91,268 @@ fn environment(
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
     );
+    // The server often inherits no charset locale, so less prints UTF-8 as <E8>.
+    // Fill LANG for whichever shell is configured. macOS login zsh would get
+    // C.UTF-8 from /etc/zprofile; shells that do not read that file would not.
+    // LANG alone still lets a later LC_* setting override one category.
+    apply_utf8_locale(&mut env);
     env
+}
+
+const CHARSET_LOCALE_KEYS: [&str; 3] = ["LC_ALL", "LC_CTYPE", "LANG"];
+const FALLBACK_UTF8_LOCALE: &str = "C.UTF-8";
+
+fn apply_utf8_locale(env: &mut Vec<(OsString, OsString)>) {
+    ensure_utf8_locale(env, system_locale().as_deref(), locale_installed);
+}
+
+fn ensure_utf8_locale(
+    env: &mut Vec<(OsString, OsString)>,
+    system: Option<&str>,
+    installed: impl FnMut(&str) -> bool,
+) {
+    if locale_is_set(env) {
+        return;
+    }
+    let Some(value) = preferred_utf8_locale(system, installed) else {
+        return;
+    };
+    env.retain(|(name, item)| !is_charset_locale_key(name) || !is_blank(item));
+    set_env(env, "LANG", &value);
+}
+
+fn preferred_utf8_locale(
+    system: Option<&str>,
+    mut installed: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    if let Some(language) = system.and_then(locale_language) {
+        let primary = format!("{language}.UTF-8");
+        if installed(&primary) {
+            return Some(primary);
+        }
+        if let Some(collapsed) = without_script(language) {
+            let secondary = format!("{collapsed}.UTF-8");
+            if installed(&secondary) {
+                return Some(secondary);
+            }
+        }
+    }
+    installed(FALLBACK_UTF8_LOCALE).then(|| String::from(FALLBACK_UTF8_LOCALE))
+}
+
+fn locale_language(identifier: &str) -> Option<&str> {
+    let head = identifier.split(['@', '.']).next().unwrap_or("").trim();
+    if head.is_empty() || head.len() > 32 {
+        return None;
+    }
+    let mut chars = head.chars();
+    if !chars
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    chars
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        .then_some(head)
+}
+
+fn without_script(language: &str) -> Option<String> {
+    let mut parts = language.split('_');
+    let root = parts.next()?;
+    let script = parts.next()?;
+    let region = parts.next()?;
+    if script.len() != 4
+        || !script
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let mut collapsed = String::with_capacity(language.len());
+    collapsed.push_str(root);
+    collapsed.push('_');
+    collapsed.push_str(region);
+    for part in parts {
+        collapsed.push('_');
+        collapsed.push_str(part);
+    }
+    Some(collapsed)
+}
+
+fn locale_is_set(env: &[(OsString, OsString)]) -> bool {
+    CHARSET_LOCALE_KEYS.iter().any(|key| {
+        env.iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .is_some_and(|(_, value)| !is_blank(value))
+    })
+}
+
+fn is_charset_locale_key(name: &OsStr) -> bool {
+    CHARSET_LOCALE_KEYS.iter().any(|key| name == *key)
+}
+
+fn is_blank(value: &OsStr) -> bool {
+    value.to_str().is_some_and(|text| text.trim().is_empty())
+}
+
+fn set_env(env: &mut Vec<(OsString, OsString)>, key: &str, value: &str) {
+    env.retain(|(name, _)| name != key);
+    env.push((OsString::from(key), OsString::from(value)));
+}
+
+fn locale_installed(name: &str) -> bool {
+    let Some(language) = name.strip_suffix(".UTF-8") else {
+        return false;
+    };
+    if locale_language(language) != Some(language) {
+        return false;
+    }
+    Path::new("/usr/share/locale").join(name).is_dir()
+}
+
+fn system_locale() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let identifier = objc2_foundation::NSLocale::currentLocale()
+            .localeIdentifier()
+            .to_string();
+        (!identifier.is_empty()).then_some(identifier)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairs(values: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        values
+            .iter()
+            .map(|(key, value)| (OsString::from(*key), OsString::from(*value)))
+            .collect()
+    }
+
+    fn value<'a>(env: &'a [(OsString, OsString)], key: &str) -> Option<&'a str> {
+        env.iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .and_then(|(_, item)| item.to_str())
+    }
+
+    fn chinese_installed(name: &str) -> bool {
+        name == "zh_CN.UTF-8" || name == FALLBACK_UTF8_LOCALE
+    }
+
+    #[test]
+    fn apple_locale_becomes_installed_utf8_locale() {
+        assert_eq!(
+            preferred_utf8_locale(Some("zh_CN"), chinese_installed).as_deref(),
+            Some("zh_CN.UTF-8")
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some(" zh_CN.GB2312 "), chinese_installed).as_deref(),
+            Some("zh_CN.UTF-8")
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some("en_US@rg=cnzzzz"), |name| name == "en_US.UTF-8").as_deref(),
+            Some("en_US.UTF-8")
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some("zh_Hans_CN"), chinese_installed).as_deref(),
+            Some("zh_CN.UTF-8")
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some("zh_Hans_CN"), |name| {
+                name == "zh_Hans_CN.UTF-8" || name == "zh_CN.UTF-8"
+            })
+            .as_deref(),
+            Some("zh_Hans_CN.UTF-8")
+        );
+    }
+
+    #[test]
+    fn unknown_locale_uses_installed_c_utf8() {
+        assert_eq!(
+            preferred_utf8_locale(Some("../tmp"), |_| true).as_deref(),
+            Some(FALLBACK_UTF8_LOCALE)
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some("zz_ZZ"), |name| name == FALLBACK_UTF8_LOCALE).as_deref(),
+            Some(FALLBACK_UTF8_LOCALE)
+        );
+        assert_eq!(
+            preferred_utf8_locale(None, |name| name == FALLBACK_UTF8_LOCALE).as_deref(),
+            Some(FALLBACK_UTF8_LOCALE)
+        );
+        assert_eq!(preferred_utf8_locale(None, |_| false), None);
+    }
+
+    #[test]
+    fn explicit_locale_is_preserved() {
+        let mut posix = pairs(&[("LANG", "C"), ("TERM", "xterm-256color")]);
+        ensure_utf8_locale(&mut posix, Some("zh_CN"), |_| true);
+        assert_eq!(value(&posix, "LANG"), Some("C"));
+
+        let mut utf8 = pairs(&[("LC_CTYPE", "en_US.UTF-8")]);
+        ensure_utf8_locale(&mut utf8, Some("zh_CN"), |_| true);
+        assert_eq!(value(&utf8, "LANG"), None);
+        assert_eq!(value(&utf8, "LC_CTYPE"), Some("en_US.UTF-8"));
+
+        let mut forced = pairs(&[("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")]);
+        ensure_utf8_locale(&mut forced, Some("en_US"), |_| true);
+        assert_eq!(value(&forced, "LC_ALL"), Some("C"));
+        assert_eq!(value(&forced, "LANG"), Some("zh_CN.UTF-8"));
+    }
+
+    #[test]
+    fn blank_locale_variables_are_replaced() {
+        let mut env = pairs(&[
+            ("LC_ALL", ""),
+            ("LC_CTYPE", "   "),
+            ("LANG", ""),
+            ("LC_MESSAGES", "C"),
+            ("TERM", "dumb"),
+        ]);
+        ensure_utf8_locale(&mut env, Some("zh_CN"), chinese_installed);
+        assert_eq!(value(&env, "LANG"), Some("zh_CN.UTF-8"));
+        assert_eq!(value(&env, "LC_ALL"), None);
+        assert_eq!(value(&env, "LC_CTYPE"), None);
+        assert_eq!(value(&env, "LC_MESSAGES"), Some("C"));
+        assert_eq!(value(&env, "TERM"), Some("dumb"));
+        assert_eq!(env.iter().filter(|(key, _)| key == "LANG").count(), 1);
+    }
+
+    #[test]
+    fn missing_locale_stays_unset_when_nothing_is_installed() {
+        let mut env = pairs(&[("PATH", "/usr/bin"), ("LANG", "")]);
+        ensure_utf8_locale(&mut env, Some("zh_CN"), |_| false);
+        assert_eq!(value(&env, "LANG"), Some(""));
+        assert_eq!(value(&env, "PATH"), Some("/usr/bin"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_shell_locale_is_known_to_the_system() -> Result<(), String> {
+        let mut env = Vec::new();
+        apply_utf8_locale(&mut env);
+        let lang = value(&env, "LANG").ok_or("LANG was not set")?;
+        let output = std::process::Command::new("/usr/bin/locale")
+            .arg("-a")
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!("locale -a exited {status}", status = output.status));
+        }
+        let listed = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        if listed.lines().any(|line| line.trim() == lang) {
+            Ok(())
+        } else {
+            Err(format!("{lang} is not listed by locale -a"))
+        }
+    }
 }
