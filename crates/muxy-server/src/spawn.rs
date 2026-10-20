@@ -91,10 +91,6 @@ fn environment(
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
     );
-    // The server often inherits no charset locale, so less prints UTF-8 as <E8>.
-    // Fill LANG for whichever shell is configured. macOS login zsh would get
-    // C.UTF-8 from /etc/zprofile; shells that do not read that file would not.
-    // LANG alone still lets a later LC_* setting override one category.
     apply_utf8_locale(&mut env);
     env
 }
@@ -117,7 +113,11 @@ fn ensure_utf8_locale(
     let Some(value) = preferred_utf8_locale(system, installed) else {
         return;
     };
-    env.retain(|(name, item)| !is_charset_locale_key(name) || !is_blank(item));
+    for (name, item) in env.iter_mut() {
+        if is_charset_locale_key(name) && is_blank(item) {
+            item.clear();
+        }
+    }
     set_env(env, "LANG", &value);
 }
 
@@ -202,6 +202,7 @@ fn set_env(env: &mut Vec<(OsString, OsString)>, key: &str, value: &str) {
     env.push((OsString::from(key), OsString::from(value)));
 }
 
+#[cfg(target_os = "macos")]
 fn locale_installed(name: &str) -> bool {
     let Some(language) = name.strip_suffix(".UTF-8") else {
         return false;
@@ -210,6 +211,21 @@ fn locale_installed(name: &str) -> bool {
         return false;
     }
     Path::new("/usr/share/locale").join(name).is_dir()
+}
+
+#[cfg(target_os = "linux")]
+fn locale_installed(name: &str) -> bool {
+    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    name == FALLBACK_UTF8_LOCALE
+        && *INSTALLED.get_or_init(|| {
+            std::process::Command::new("/usr/bin/locale")
+                .arg("charmap")
+                .env("LC_ALL", FALLBACK_UTF8_LOCALE)
+                .output()
+                .is_ok_and(|output| {
+                    output.status.success() && output.stdout.trim_ascii() == b"UTF-8"
+                })
+        })
 }
 
 fn system_locale() -> Option<String> {
@@ -320,8 +336,8 @@ mod tests {
         ]);
         ensure_utf8_locale(&mut env, Some("zh_CN"), chinese_installed);
         assert_eq!(value(&env, "LANG"), Some("zh_CN.UTF-8"));
-        assert_eq!(value(&env, "LC_ALL"), None);
-        assert_eq!(value(&env, "LC_CTYPE"), None);
+        assert_eq!(value(&env, "LC_ALL"), Some(""));
+        assert_eq!(value(&env, "LC_CTYPE"), Some(""));
         assert_eq!(value(&env, "LC_MESSAGES"), Some("C"));
         assert_eq!(value(&env, "TERM"), Some("dumb"));
         assert_eq!(env.iter().filter(|(key, _)| key == "LANG").count(), 1);
@@ -335,24 +351,19 @@ mod tests {
         assert_eq!(value(&env, "PATH"), Some("/usr/bin"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_shell_locale_is_known_to_the_system() -> Result<(), String> {
+    fn shell_locale_selects_utf8_on_the_system() -> Result<(), String> {
         let mut env = Vec::new();
         apply_utf8_locale(&mut env);
-        let lang = value(&env, "LANG").ok_or("LANG was not set")?;
+        value(&env, "LANG").ok_or("LANG was not set")?;
         let output = std::process::Command::new("/usr/bin/locale")
-            .arg("-a")
+            .arg("charmap")
+            .env_clear()
+            .envs(env)
             .output()
             .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(format!("locale -a exited {status}", status = output.status));
-        }
-        let listed = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
-        if listed.lines().any(|line| line.trim() == lang) {
-            Ok(())
-        } else {
-            Err(format!("{lang} is not listed by locale -a"))
-        }
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout.trim_ascii(), b"UTF-8");
+        Ok(())
     }
 }
