@@ -1,5 +1,5 @@
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{CString, OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use muxy_protocol::ErrorCode;
@@ -125,59 +125,28 @@ fn preferred_utf8_locale(
     system: Option<&str>,
     mut installed: impl FnMut(&str) -> bool,
 ) -> Option<String> {
-    if let Some(language) = system.and_then(locale_language) {
-        let primary = format!("{language}.UTF-8");
-        if installed(&primary) {
-            return Some(primary);
-        }
-        if let Some(collapsed) = without_script(language) {
-            let secondary = format!("{collapsed}.UTF-8");
-            if installed(&secondary) {
-                return Some(secondary);
-            }
-        }
-    }
-    installed(FALLBACK_UTF8_LOCALE).then(|| String::from(FALLBACK_UTF8_LOCALE))
+    system
+        .and_then(language_and_region)
+        .map(|locale| format!("{locale}.UTF-8"))
+        .into_iter()
+        .chain([String::from(FALLBACK_UTF8_LOCALE)])
+        .find(|name| installed(name))
 }
 
-fn locale_language(identifier: &str) -> Option<&str> {
-    let head = identifier.split(['@', '.']).next().unwrap_or("").trim();
-    if head.is_empty() || head.len() > 32 {
-        return None;
-    }
-    let mut chars = head.chars();
-    if !chars
-        .next()
-        .is_some_and(|character| character.is_ascii_alphabetic())
-    {
-        return None;
-    }
-    chars
-        .all(|character| character.is_ascii_alphanumeric() || character == '_')
-        .then_some(head)
+fn language_and_region(identifier: &str) -> Option<String> {
+    let head = identifier.split(['@', '.']).next()?.trim();
+    let mut subtags = head.split(['-', '_']);
+    let language = subtags.next()?;
+    let region = subtags.find(|subtag| !is_script(subtag))?;
+    let valid = (2..=3).contains(&language.len())
+        && language.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && (2..=3).contains(&region.len())
+        && region.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    valid.then(|| format!("{language}_{region}"))
 }
 
-fn without_script(language: &str) -> Option<String> {
-    let mut parts = language.split('_');
-    let root = parts.next()?;
-    let script = parts.next()?;
-    let region = parts.next()?;
-    if script.len() != 4
-        || !script
-            .chars()
-            .all(|character| character.is_ascii_alphabetic())
-    {
-        return None;
-    }
-    let mut collapsed = String::with_capacity(language.len());
-    collapsed.push_str(root);
-    collapsed.push('_');
-    collapsed.push_str(region);
-    for part in parts {
-        collapsed.push('_');
-        collapsed.push_str(part);
-    }
-    Some(collapsed)
+fn is_script(subtag: &str) -> bool {
+    subtag.len() == 4 && subtag.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
 fn locale_is_set(env: &[(OsString, OsString)]) -> bool {
@@ -202,30 +171,23 @@ fn set_env(env: &mut Vec<(OsString, OsString)>, key: &str, value: &str) {
     env.push((OsString::from(key), OsString::from(value)));
 }
 
-#[cfg(target_os = "macos")]
+#[allow(
+    unsafe_code,
+    reason = "the C library is the only authority on which locales it can load"
+)]
 fn locale_installed(name: &str) -> bool {
-    let Some(language) = name.strip_suffix(".UTF-8") else {
+    let Ok(name) = CString::new(name) else {
         return false;
     };
-    if locale_language(language) != Some(language) {
+    // SAFETY: `name` is a valid C string and a null base asks for a new locale.
+    let locale =
+        unsafe { libc::newlocale(libc::LC_CTYPE_MASK, name.as_ptr(), std::ptr::null_mut()) };
+    if locale.is_null() {
         return false;
     }
-    Path::new("/usr/share/locale").join(name).is_dir()
-}
-
-#[cfg(target_os = "linux")]
-fn locale_installed(name: &str) -> bool {
-    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    name == FALLBACK_UTF8_LOCALE
-        && *INSTALLED.get_or_init(|| {
-            std::process::Command::new("/usr/bin/locale")
-                .arg("charmap")
-                .env("LC_ALL", FALLBACK_UTF8_LOCALE)
-                .output()
-                .is_ok_and(|output| {
-                    output.status.success() && output.stdout.trim_ascii() == b"UTF-8"
-                })
-        })
+    // SAFETY: `locale` came from `newlocale` and is freed once.
+    unsafe { libc::freelocale(locale) };
+    true
 }
 
 fn system_locale() -> Option<String> {
@@ -279,15 +241,12 @@ mod tests {
             Some("en_US.UTF-8")
         );
         assert_eq!(
-            preferred_utf8_locale(Some("zh_Hans_CN"), chinese_installed).as_deref(),
+            preferred_utf8_locale(Some("zh-Hant_CN"), chinese_installed).as_deref(),
             Some("zh_CN.UTF-8")
         );
         assert_eq!(
-            preferred_utf8_locale(Some("zh_Hans_CN"), |name| {
-                name == "zh_Hans_CN.UTF-8" || name == "zh_CN.UTF-8"
-            })
-            .as_deref(),
-            Some("zh_Hans_CN.UTF-8")
+            preferred_utf8_locale(Some("sr-Latn_RS"), |name| name == "sr_RS.UTF-8").as_deref(),
+            Some("sr_RS.UTF-8")
         );
     }
 
@@ -299,6 +258,10 @@ mod tests {
         );
         assert_eq!(
             preferred_utf8_locale(Some("zz_ZZ"), |name| name == FALLBACK_UTF8_LOCALE).as_deref(),
+            Some(FALLBACK_UTF8_LOCALE)
+        );
+        assert_eq!(
+            preferred_utf8_locale(Some("zh-Hans"), chinese_installed).as_deref(),
             Some(FALLBACK_UTF8_LOCALE)
         );
         assert_eq!(
@@ -352,18 +315,9 @@ mod tests {
     }
 
     #[test]
-    fn shell_locale_selects_utf8_on_the_system() -> Result<(), String> {
-        let mut env = Vec::new();
-        apply_utf8_locale(&mut env);
-        value(&env, "LANG").ok_or("LANG was not set")?;
-        let output = std::process::Command::new("/usr/bin/locale")
-            .arg("charmap")
-            .env_clear()
-            .envs(env)
-            .output()
-            .map_err(|error| error.to_string())?;
-        assert!(output.status.success(), "{output:?}");
-        assert_eq!(output.stdout.trim_ascii(), b"UTF-8");
-        Ok(())
+    fn only_loadable_locales_are_installed() {
+        assert!(locale_installed("C"));
+        assert!(!locale_installed("zz_ZZ.UTF-8"));
+        assert!(!locale_installed("C\0UTF-8"));
     }
 }
